@@ -8,6 +8,76 @@ Because Rust enforces strict memory safety and ownership rules, implementing
 this pattern requires explicit handling of value ownership, usually via Box<dyn
 State> and Option::take.
 
+### UML Diagrams
+
+#### Class Diagram
+
+```
+┌───────────────────────────────────────────────────────────────┐
+│                      «trait» State                            │
+├───────────────────────────────────────────────────────────────┤
+│ + request_review(self: Box<Self>) -> Box<dyn State>           │
+│ + approve(self: Box<Self>) -> Box<dyn State>                  │
+│ + content<'a>(&self, post: &'a Post) -> &'a str               │
+└───────────────────────────────────────────────────────────────┘
+          ▲                    ▲                    ▲
+          │ «implement»        │ «implement»        │ «implement»
+┌─────────┴─────────┐ ┌────────┴──────────┐ ┌────────┴──────────┐
+│      Draft        │ │  PendingReview    │ │     Published     │
+├───────────────────┤ ├───────────────────┤ ├───────────────────┤
+│ + request_review  │ │ + request_review  │ │ + request_review  │
+│   → Box(Pending)  │ │   → self          │ │   → self          │
+│ + approve → self  │ │ + approve         │ │ + approve → self  │
+│                   │ │   → Box(Published)│ │ + content         │
+│                   │ │                   │ │   → &post.content │
+└───────────────────┘ └───────────────────┘ └───────────────────┘
+
+┌───────────────────────────────────────────────────────────────┐
+│                                                               │
+│  ┌─────────────────────────────────────────────────────────┐  │
+│  │                        Post                             │  │
+│  ├─────────────────────────────────────────────────────────┤  │
+│  │ - state: Option<Box<dyn State>>                         │  │
+│  │ - content: String                                       │  │
+│  ├─────────────────────────────────────────────────────────┤  │
+│  │ + new() -> Post                                         │  │
+│  │ + add_text(text: &str)                                  │  │
+│  │ + content() -> &str                                     │  │
+│  │ + request_review()                                      │  │
+│  │ + approve()                                             │  │
+│  └─────────────────────────────────────────────────────────┘  │
+│                                                               │
+└───────────────────────────────────────────────────────────────┘
+```
+
+**Relationships:**
+
+* `Post ──▸ State`: composition (Post holds one `Option<Box<dyn State>>`, delegating behavior via `Option::take()`).
+* `Draft`, `PendingReview`, `Published ──▸ State`: implementation.
+* `Published ──▸ Post`: back-reference — `content()` reads `&post.content`.
+
+#### State Transition Diagram
+
+```
+                    +-------------------+
+                    |       Post        |
+                    |  state: <current> |
+                    +-------------------+
+                             |
+                             | delegates to current state
+                             v
+ ┌──────────┐   request_review    ┌────────────────┐   approve    ┌───────────┐
+ │  Draft   │───────────────────▶│ PendingReview  │────────────▶│ Published │
+ │ (initial)│                     │                │              │           │
+ └──────────┘                     └────────────────┘              └───────────┘
+      │ approve (no-op)                  │ approve → Published         │ request_review /
+      └──▶ returns self unchanged       │                             │ approve (no-op)
+                                         │                             └──▶ returns self
+                                         │
+                                         │ request_review (no-op)
+                                         └──▶ returns self unchanged
+```
+
 ### Crucial Architectural Nuances in Rust
 
 ## 1. Why self: Box<Self> is Required
@@ -35,9 +105,7 @@ ownership safely into the transition methods.
 Look at the content method signature:
 
 ```rust
-```
 fn content<'a>(&self, post: &'a Post) -> &'a str
-```
 ```
 
 The returned string slice (&str) references the content field owned by the Post
